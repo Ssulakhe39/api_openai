@@ -1,0 +1,77 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+backend/venv/
+backend/.venv/
+.venv/
+venv/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.hypothesis/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+frontend/node_modules/
+frontend/dist/
+
+# Environment variables
+.env
+.env.local
+
+# Uploaded images and generated masks
+backend/uploads/
+backend/masks/
+backend/static/images/
+backend/static/masks/
+
+# Model weights and checkpoints
+backend/models/weights/
+backend/models/checkpoints/
+*.pth
+*.pt
+*.onnx
+*.pb
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
