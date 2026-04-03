@@ -16,7 +16,7 @@ class SegmentationModel(ABC):
     """
     Abstract base class for all segmentation models.
     
-    This class defines the interface that all segmentation models (SAM2, YOLOv8, U-Net)
+    This class defines the interface that all segmentation models (YOLOv8, Mask R-CNN)
     must implement. It provides a common segment() method that orchestrates the
     segmentation pipeline by calling model-specific preprocessing, prediction,
     and postprocessing methods.

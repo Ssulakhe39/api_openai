@@ -6,6 +6,7 @@ import logging
 import time
 from typing import List, Tuple
 
+import cv2
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -24,7 +25,6 @@ def process_all_buildings_rect(
     Compute minAreaRect for every building mask.
     Returns list of (idx, polygon_coords, "rect").
     """
-    import cv2
     results = []
     for idx, mask in enumerate(masks):
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -53,7 +53,6 @@ def render_overlay(
     results: List[Tuple[int, List, str]],
 ) -> np.ndarray:
     """Draw 1px red rotated rectangles on the original image."""
-    import cv2
     out = original_bgr.copy()
     for idx, polygon, source in results:
         if len(polygon) < 3:

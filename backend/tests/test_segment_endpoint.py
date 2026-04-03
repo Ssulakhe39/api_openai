@@ -45,7 +45,6 @@ def uploaded_image_id(client, valid_test_image):
 def cleanup_files():
     """Clean up uploaded files and masks after each test."""
     yield
-    # Remove all test files
     for file in UPLOAD_DIR.glob("*"):
         if file.is_file():
             file.unlink()
@@ -60,64 +59,45 @@ def test_segment_with_valid_inputs(client, uploaded_image_id, mock_segmentation)
         "/segment",
         json={
             "image_id": uploaded_image_id,
-            "model": "sam2"
+            "model": "yolov8m-custom"
         }
     )
-    
+
     assert response.status_code == 200
     data = response.json()
-    
-    # Check response structure
+
     assert "mask_url" in data
     assert "mask_base64" in data
     assert "processing_time" in data
     assert "model_used" in data
-    
-    # Check values
+
     assert data["mask_url"].startswith("/masks/")
     assert data["mask_url"].endswith("-mask.png")
     assert uploaded_image_id in data["mask_url"]
-    assert "sam2" in data["mask_url"]
+    assert "yolov8m-custom" in data["mask_url"]
     assert len(data["mask_base64"]) > 0
     assert data["processing_time"] > 0
-    assert data["model_used"] == "sam2"
-    
-    # Verify mask file was saved
+    assert data["model_used"] == "yolov8m-custom"
+
     mask_filename = data["mask_url"].split("/")[-1]
     mask_file = MASK_DIR / mask_filename
     assert mask_file.exists()
 
 
-def test_segment_with_yolov8_model(client, uploaded_image_id, mock_segmentation):
-    """Test segmentation with YOLOv8 model."""
+def test_segment_with_maskrcnn_model(client, uploaded_image_id, mock_segmentation):
+    """Test segmentation with Mask R-CNN model."""
     response = client.post(
         "/segment",
         json={
             "image_id": uploaded_image_id,
-            "model": "yolov8"
+            "model": "maskrcnn-custom"
         }
     )
-    
+
     assert response.status_code == 200
     data = response.json()
-    assert data["model_used"] == "yolov8"
-    assert "yolov8" in data["mask_url"]
-
-
-def test_segment_with_unet_model(client, uploaded_image_id, mock_segmentation):
-    """Test segmentation with U-Net model."""
-    response = client.post(
-        "/segment",
-        json={
-            "image_id": uploaded_image_id,
-            "model": "unet"
-        }
-    )
-    
-    assert response.status_code == 200
-    data = response.json()
-    assert data["model_used"] == "unet"
-    assert "unet" in data["mask_url"]
+    assert data["model_used"] == "maskrcnn-custom"
+    assert "maskrcnn-custom" in data["mask_url"]
 
 
 def test_segment_with_invalid_model(client, uploaded_image_id):
@@ -129,13 +109,12 @@ def test_segment_with_invalid_model(client, uploaded_image_id):
             "model": "invalid_model"
         }
     )
-    
+
     assert response.status_code == 400
     data = response.json()
     assert "Invalid model name" in data["detail"]
-    assert "sam2" in data["detail"]
-    assert "yolov8" in data["detail"]
-    assert "unet" in data["detail"]
+    assert "yolov8m-custom" in data["detail"]
+    assert "maskrcnn-custom" in data["detail"]
 
 
 def test_segment_with_missing_image(client):
@@ -144,10 +123,10 @@ def test_segment_with_missing_image(client):
         "/segment",
         json={
             "image_id": "non-existent-uuid",
-            "model": "sam2"
+            "model": "yolov8m-custom"
         }
     )
-    
+
     assert response.status_code == 404
     data = response.json()
     assert "Image not found" in data["detail"]
@@ -158,11 +137,9 @@ def test_segment_without_image_id(client):
     response = client.post(
         "/segment",
         json={
-            "model": "sam2"
+            "model": "yolov8m-custom"
         }
     )
-    
-    # Should return 422 (Unprocessable Entity) for missing required field
     assert response.status_code == 422
 
 
@@ -174,58 +151,42 @@ def test_segment_without_model(client, uploaded_image_id):
             "image_id": uploaded_image_id
         }
     )
-    
-    # Should return 422 (Unprocessable Entity) for missing required field
     assert response.status_code == 422
 
 
 def test_segment_multiple_times_same_image(client, uploaded_image_id, mock_segmentation):
     """Test running segmentation multiple times on the same image."""
-    # First segmentation
     response1 = client.post(
         "/segment",
-        json={
-            "image_id": uploaded_image_id,
-            "model": "sam2"
-        }
+        json={"image_id": uploaded_image_id, "model": "yolov8m-custom"}
     )
     assert response1.status_code == 200
-    
-    # Second segmentation with different model
+
     response2 = client.post(
         "/segment",
-        json={
-            "image_id": uploaded_image_id,
-            "model": "yolov8"
-        }
+        json={"image_id": uploaded_image_id, "model": "maskrcnn-custom"}
     )
     assert response2.status_code == 200
-    
-    # Both should succeed and have different mask URLs
+
     assert response1.json()["mask_url"] != response2.json()["mask_url"]
 
 
 def test_segment_returns_base64_encoded_mask(client, uploaded_image_id, mock_segmentation):
     """Test that the returned base64 mask can be decoded."""
     import base64
-    
+
     response = client.post(
         "/segment",
-        json={
-            "image_id": uploaded_image_id,
-            "model": "sam2"
-        }
+        json={"image_id": uploaded_image_id, "model": "yolov8m-custom"}
     )
-    
+
     assert response.status_code == 200
     data = response.json()
-    
-    # Try to decode base64
+
     try:
         decoded = base64.b64decode(data["mask_base64"])
-        # Try to load as image
         mask_image = Image.open(io.BytesIO(decoded))
-        assert mask_image.mode == 'L'  # Grayscale
+        assert mask_image.mode == 'L'
     except Exception as e:
         pytest.fail(f"Failed to decode base64 mask: {e}")
 
@@ -234,16 +195,11 @@ def test_segment_processing_time_is_reasonable(client, uploaded_image_id, mock_s
     """Test that processing time is recorded and reasonable."""
     response = client.post(
         "/segment",
-        json={
-            "image_id": uploaded_image_id,
-            "model": "sam2"
-        }
+        json={"image_id": uploaded_image_id, "model": "yolov8m-custom"}
     )
-    
+
     assert response.status_code == 200
     data = response.json()
-    
-    # Processing time should be positive and less than 300 seconds
     assert data["processing_time"] > 0
     assert data["processing_time"] < 300
 
@@ -255,28 +211,22 @@ def test_segment_with_different_image_formats(client, mock_segmentation):
         ("test.png", "PNG", "image/png"),
         ("test.tiff", "TIFF", "image/tiff")
     ]
-    
+
     for filename, format_name, mime_type in formats:
-        # Create image
         img = Image.new('RGB', (100, 100), color='blue')
         buffer = io.BytesIO()
         img.save(buffer, format=format_name)
         buffer.seek(0)
-        
-        # Upload
+
         upload_response = client.post(
             "/upload",
             files={"file": (filename, buffer, mime_type)}
         )
         assert upload_response.status_code == 200
         image_id = upload_response.json()["image_id"]
-        
-        # Segment
+
         segment_response = client.post(
             "/segment",
-            json={
-                "image_id": image_id,
-                "model": "sam2"
-            }
+            json={"image_id": image_id, "model": "yolov8m-custom"}
         )
         assert segment_response.status_code == 200

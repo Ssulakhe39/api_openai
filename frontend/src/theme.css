@@ -111,8 +111,6 @@
 :root[data-theme="light"] .sidebar-user-name { color: #e2e8f0; }
 :root[data-theme="light"] .sidebar-user-email { color: #64748b; }
 :root[data-theme="light"] .sidebar-user-avatar { background: #334155; color: #38bdf8; }
-:root[data-theme="light"] .sidebar-signout { color: #64748b; }
-:root[data-theme="light"] .sidebar-signout:hover { color: #f87171; }
 
 /* Header */
 :root[data-theme="light"] .main-header {
@@ -333,20 +331,6 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.sidebar-signout {
-  background: none;
-  border: none;
-  color: var(--text-tertiary);
-  cursor: pointer;
-  padding: var(--spacing-sm);
-  font-size: 1rem;
-  transition: color var(--transition-fast);
-}
-
-.sidebar-signout:hover {
-  color: var(--status-error);
 }
 
 /* ── Main Content ────────────────────────────────────────────────────── */

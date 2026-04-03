@@ -41,8 +41,8 @@ class BhumiAIApp {
     this.dashboard = new Dashboard();
     this.dashboard.init();
     
-    // Set up sign out
-    this.setupSignOut();
+    // Set up navigation
+    this.setupNavigation();
     
     // Load dashboard stats
     this.loadDashboardStats();
@@ -57,7 +57,7 @@ class BhumiAIApp {
   }
 
   setupUserInfo() {
-    const username = sessionStorage.getItem('auth_user') || 'operator';
+    const username = 'operator';
     const email = `${username}@bhumi.ai`;
     const initials = username.substring(0, 2).toUpperCase();
     
@@ -78,12 +78,6 @@ class BhumiAIApp {
     if (profileNameEl) profileNameEl.textContent = username.charAt(0).toUpperCase() + username.slice(1);
     if (profileEmailEl) profileEmailEl.textContent = `📧 ${email}`;
     if (profileAvatarEl) profileAvatarEl.textContent = initials;
-    
-    // Set member since date
-    const loginTime = sessionStorage.getItem('auth_login_time');
-    const memberSince = loginTime ? new Date(parseInt(loginTime)).toISOString().split('T')[0] : '2023-01-15';
-    const memberSinceEl = document.getElementById('profileMemberSince');
-    if (memberSinceEl) memberSinceEl.textContent = memberSince;
     
     // Update settings fields
     const settingsUsernameEl = document.getElementById('settingsUsername');
@@ -853,15 +847,6 @@ class BhumiAIApp {
     });
   }
 
-  setupSignOut() {
-    const signOutBtn = document.getElementById('signOutBtn');
-    if (signOutBtn) {
-      signOutBtn.addEventListener('click', () => {
-        sessionStorage.clear();
-        window.location.reload();
-      });
-    }
-  }
 
   async loadDashboardStats() {
     if (!this.dashboard) return;

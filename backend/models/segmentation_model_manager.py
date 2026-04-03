@@ -2,18 +2,16 @@
 Segmentation Model Manager for managing and routing segmentation requests.
 
 This module provides a centralized manager for loading and executing different
-segmentation models (SAM2, YOLOv8, U-Net). It implements lazy loading to only
+segmentation models (YOLOv8, Mask R-CNN). It implements lazy loading to only
 initialize models when first requested, improving startup time and memory usage.
 """
 
 from typing import Dict, Optional
+from pathlib import Path
+import os
 import numpy as np
-import importlib.util
 
 from .segmentation_model import SegmentationModel
-
-# All heavy adapter imports are deferred to load_model() to keep startup fast
-SAM2_AVAILABLE = importlib.util.find_spec("sam2") is not None
 
 
 class SegmentationModelManager:
@@ -35,25 +33,23 @@ class SegmentationModelManager:
         self.models: Dict[str, SegmentationModel] = {}
         self.model_configs: Dict[str, dict] = {}
         
-        # Add SAM2 only if available
-        if SAM2_AVAILABLE:
-            self.model_configs['sam2'] = {
-                'class': None,
-                'checkpoint_path': 'checkpoints/sam2_hiera_large.pt',
-                'model_cfg': 'sam2_hiera_l.yaml'
-            }
-        
+        # Resolve weights directory relative to this file
+        _weights_dir = Path(__file__).parent / 'weights'
+
+        yolov8_path = os.getenv("YOLOV8_MODEL_PATH") or str(_weights_dir / 'best_fixed.pt')
+        maskrcnn_path = os.getenv("MASKRCNN_MODEL_PATH") or str(_weights_dir / 'maskrcnn_building_best.pth')
+
         # Add custom YOLOv8m segmentation model trained on building dataset
         self.model_configs['yolov8m-custom'] = {
             'class': None,
-            'model_path': r'D:\model weights\best_fixed.pt'
+            'model_path': yolov8_path,
         }
         
         # Add custom Mask R-CNN segmentation model trained on building dataset
         self.model_configs['maskrcnn-custom'] = {
             'class': None,
-            'model_path': r'D:\model weights\maskrcnn_building_best.pth',
-            'num_classes': 2
+            'model_path': maskrcnn_path,
+            'num_classes': 2,
         }
     
     def load_model(self, model_name: str) -> None:
@@ -64,7 +60,7 @@ class SegmentationModelManager:
         If the model is already loaded, this method does nothing (idempotent).
         
         Args:
-            model_name: Name of the model to load ('sam2', 'yolov8', or 'unet')
+            model_name: Name of the model to load
         
         Raises:
             ValueError: If model_name is not supported
@@ -88,14 +84,7 @@ class SegmentationModelManager:
         
         # Lazy import the adapter class now (deferred from module load)
         if model_class is None:
-            if model_name == 'sam2':
-                if SAM2_AVAILABLE:
-                    try:
-                        from .sam2_adapter import SAM2Adapter
-                        model_class = SAM2Adapter
-                    except ImportError:
-                        raise ValueError("SAM2 is not available.")
-            elif model_name in ['yolov8m-custom']:
+            if model_name == 'yolov8m-custom':
                 from .yolov8_adapter import YOLOv8Adapter
                 model_class = YOLOv8Adapter
             elif model_name == 'maskrcnn-custom':
@@ -103,12 +92,7 @@ class SegmentationModelManager:
                 model_class = MaskRCNNAdapter
         
         # Create model instance based on type
-        if model_name == 'sam2':
-            model = model_class(
-                checkpoint_path=config['checkpoint_path'],
-                model_cfg=config['model_cfg']
-            )
-        elif model_name in ['yolov8', 'yolov8m-custom']:
+        if model_name == 'yolov8m-custom':
             model = model_class(
                 model_path=config['model_path']
             )
@@ -116,15 +100,6 @@ class SegmentationModelManager:
             model = model_class(
                 model_path=config['model_path'],
                 num_classes=config.get('num_classes', 2)
-            )
-        elif model_name == 'unet':
-            model = model_class(
-                model_path=config['model_path'],
-                framework=config['framework']
-            )
-        elif model_name == 'unet-aerial':
-            model = model_class(
-                model_path=config['model_path']
             )
         else:
             # Generic fallback for new models
@@ -144,7 +119,7 @@ class SegmentationModelManager:
         yet loaded, it will be loaded automatically (lazy loading).
         
         Args:
-            model_name: Name of the model to retrieve ('sam2', 'yolov8', or 'unet')
+            model_name: Name of the model to retrieve
         
         Returns:
             Loaded model instance implementing SegmentationModel interface
@@ -168,7 +143,7 @@ class SegmentationModelManager:
         
         Args:
             image: Input image as numpy array with shape (H, W, C) and dtype uint8
-            model_name: Name of the model to use ('sam2', 'yolov8', or 'unet')
+            model_name: Name of the model to use
         
         Returns:
             Binary segmentation mask as numpy array with shape (H, W),

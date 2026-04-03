@@ -42,7 +42,7 @@
                         <div class="sidebar-user-name" id="userName">J. Doe</div>
                         <div class="sidebar-user-email" id="userEmail">jdoe@bhumi.ai</div>
                     </div>
-                    <button class="sidebar-signout" id="signOutBtn" title="Sign Out">🚪</button>
+
                 </div>
             </div>
         </aside>
@@ -145,10 +145,6 @@
                                     <span style="width: 8px; height: 8px; background: var(--status-success); border-radius: 50%;"></span>
                                     <span style="font-size: 0.875rem; color: var(--status-success); font-weight: 600;" id="profileRole">Admin Operator</span>
                                 </div>
-                                <p style="font-size: 0.75rem; color: var(--text-tertiary);">
-                                    <span>Member since: </span>
-                                    <span id="profileMemberSince">2023-01-15</span>
-                                </p>
                             </div>
                             
                             <div style="margin-top: var(--spacing-lg); padding-top: var(--spacing-lg); border-top: 1px solid var(--border-primary);">
@@ -273,12 +269,5 @@
     </div>
 
     <script type="module" src="src/index.js"></script>
-    <script>
-        // Auth guard removed — no login required
-        if (!sessionStorage.getItem('auth_token')) {
-            sessionStorage.setItem('auth_token', 'guest');
-            sessionStorage.setItem('auth_user', 'user');
-        }
-    </script>
 </body>
 </html>

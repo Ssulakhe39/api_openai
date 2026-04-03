@@ -2,14 +2,15 @@
 
 from .segmentation_model import SegmentationModel
 
-# Lazy import for adapters to avoid requiring heavy dependencies at import time
-def _get_sam2_adapter():
-    from .sam2_adapter import SAM2Adapter
-    return SAM2Adapter
 
+# Lazy import for adapters to avoid requiring heavy dependencies at import time
 def _get_yolov8_adapter():
     from .yolov8_adapter import YOLOv8Adapter
     return YOLOv8Adapter
+
+def _get_maskrcnn_adapter():
+    from .maskrcnn_adapter import MaskRCNNAdapter
+    return MaskRCNNAdapter
 
 def _get_unet_adapter():
     from .unet_adapter import UNetAdapter
@@ -19,16 +20,21 @@ def _get_segmentation_model_manager():
     from .segmentation_model_manager import SegmentationModelManager
     return SegmentationModelManager
 
-__all__ = ['SegmentationModel', 'SAM2Adapter', 'YOLOv8Adapter', 'UNetAdapter', 'SegmentationModelManager']
+__all__ = ['SegmentationModel', 'YOLOv8Adapter', 'MaskRCNNAdapter', 'UNetAdapter', 'SegmentationModelManager']
 
-# Make adapters available but only import when accessed
+
 def __getattr__(name):
-    if name == 'SAM2Adapter':
-        return _get_sam2_adapter()
-    elif name == 'YOLOv8Adapter':
-        return _get_yolov8_adapter()
-    elif name == 'UNetAdapter':
-        return _get_unet_adapter()
-    elif name == 'SegmentationModelManager':
-        return _get_segmentation_model_manager()
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    _lazy = {
+        'YOLOv8Adapter': _get_yolov8_adapter,
+        'MaskRCNNAdapter': _get_maskrcnn_adapter,
+        'UNetAdapter': _get_unet_adapter,
+        'SegmentationModelManager': _get_segmentation_model_manager,
+    }
+    if name in _lazy:
+        return _lazy[name]()
+    # Allow normal submodule resolution (e.g. backend.models.yolov8_adapter)
+    import importlib
+    try:
+        return importlib.import_module(f'.{name}', __name__)
+    except ImportError:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

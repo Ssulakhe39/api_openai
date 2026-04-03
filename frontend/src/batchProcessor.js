@@ -154,6 +154,7 @@ export class BatchProcessor {
 
   _startPolling() {
     if (this._pollTimer) clearInterval(this._pollTimer);
+    this._pollFailures = 0;
     this._pollTimer = setInterval(() => this._pollStatus(), 2000);
   }
 
@@ -163,6 +164,7 @@ export class BatchProcessor {
       const res  = await fetch(`/api/batch/${this._batchId}/status`);
       const data = await res.json();
       if (!res.ok) return;
+      this._pollFailures = 0;
       this._items = data.items;
       const done = data.done, total = data.total;
       this._showBatchLoading(true, `Detecting buildings… ${done}/${total} images`);
@@ -180,7 +182,15 @@ export class BatchProcessor {
           }));
         });
       }
-    } catch (_) {}
+    } catch (_) {
+      this._pollFailures++;
+      if (this._pollFailures >= 3) {
+        clearInterval(this._pollTimer);
+        this._pollTimer = null;
+        this._showBatchLoading(false);
+        this._showError('Lost connection to server. Please check the backend is running and refresh.');
+      }
+    }
   }
 
   // ── Thumbnail grid ────────────────────────────────────────────────────────

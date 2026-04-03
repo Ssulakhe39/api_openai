@@ -112,9 +112,6 @@ export class Dashboard {
       const backdrop = document.getElementById('dashboard-backdrop');
       if (close)    close.addEventListener('click',    () => this._close());
       if (backdrop) backdrop.addEventListener('click', () => this._close());
-
-      const loginTime = sessionStorage.getItem('auth_login_time');
-      if (loginTime) this._sessionStart = parseInt(loginTime);
     } catch (e) {
       console.error('Dashboard bind error:', e);
     }
