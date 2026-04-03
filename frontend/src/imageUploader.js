@@ -3,31 +3,50 @@
  */
 export class ImageUploader {
   constructor() {
-    this.fileInput = document.getElementById('image-input');
-    this.uploadButton = document.getElementById('upload-button');
-    this.uploadStatus = document.getElementById('upload-status');
-    this.originalPanel = document.getElementById('original-panel');
+    // Don't store element references in constructor - get them when needed
+    // This allows the component to work even if elements don't exist yet
     this.uploadedImageData = null;
     this.imageId = null;
-    
-    this.setupEventListeners();
   }
-
+  
+  // Getter methods to retrieve elements when needed
+  get fileInput() {
+    return document.getElementById('image-input');
+  }
+  
+  get uploadButton() {
+    return document.getElementById('upload-button');
+  }
+  
+  get uploadStatus() {
+    return document.getElementById('upload-status');
+  }
+  
+  get originalPanel() {
+    return document.getElementById('original-panel');
+  }
+  
   setupEventListeners() {
-    this.uploadButton.addEventListener('click', () => this.handleUpload());
-    this.fileInput.addEventListener('change', () => this.handleFileSelect());
+    if (this.uploadButton) {
+      this.uploadButton.addEventListener('click', () => this.handleUpload());
+    }
+    if (this.fileInput) {
+      this.fileInput.addEventListener('change', () => this.handleFileSelect());
+    }
   }
 
   handleFileSelect() {
-    const file = this.fileInput.files[0];
+    const file = this.fileInput ? this.fileInput.files[0] : null;
     if (file) {
       const validation = this.validateFile(file);
       if (!validation.valid) {
         this.showError(validation.error);
-        this.fileInput.value = '';
+        if (this.fileInput) this.fileInput.value = '';
       } else {
-        this.uploadStatus.textContent = `Selected: ${file.name}`;
-        this.uploadStatus.style.color = '#27ae60';
+        if (this.uploadStatus) {
+          this.uploadStatus.textContent = `Selected: ${file.name}`;
+          this.uploadStatus.style.color = '#27ae60';
+        }
       }
     }
   }
@@ -79,17 +98,17 @@ export class ImageUploader {
     formData.append('file', file);
     
     try {
-      const response = await fetch('http://localhost:8000/upload', {
+      const response = await fetch('/upload', {
         method: 'POST',
         body: formData
       });
       
+      const data = await response.json().catch(() => ({}));
+
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || 'Upload failed');
+        throw new Error(data.detail || 'Upload failed');
       }
       
-      const data = await response.json();
       return data;
     } catch (error) {
       if (error.message.includes('Failed to fetch')) {
@@ -100,7 +119,7 @@ export class ImageUploader {
   }
 
   async handleUpload() {
-    const file = this.fileInput.files[0];
+    const file = this.fileInput ? this.fileInput.files[0] : null;
     
     if (!file) {
       this.showError('Please select an image file first.');
@@ -114,9 +133,11 @@ export class ImageUploader {
     }
     
     // Show uploading status
-    this.uploadButton.disabled = true;
-    this.uploadStatus.textContent = 'Uploading...';
-    this.uploadStatus.style.color = '#3498db';
+    if (this.uploadButton) this.uploadButton.disabled = true;
+    if (this.uploadStatus) {
+      this.uploadStatus.textContent = 'Uploading...';
+      this.uploadStatus.style.color = '#3498db';
+    }
     
     try {
       const response = await this.uploadImage(file);
@@ -124,10 +145,12 @@ export class ImageUploader {
       this.uploadedImageData = response;
       
       // Display the uploaded image
-      this.displayImage(`http://localhost:8000${response.image_url}`);
+      this.displayImage(`${response.image_url}`);
       
-      this.uploadStatus.textContent = `Upload successful! (${response.width}x${response.height})`;
-      this.uploadStatus.style.color = '#27ae60';
+      if (this.uploadStatus) {
+        this.uploadStatus.textContent = `Upload successful! (${response.width}x${response.height})`;
+        this.uploadStatus.style.color = '#27ae60';
+      }
       
       // Trigger custom event for other components
       window.dispatchEvent(new CustomEvent('imageUploaded', { 
@@ -136,9 +159,9 @@ export class ImageUploader {
       
     } catch (error) {
       this.showError(error.message);
-      this.uploadStatus.textContent = '';
+      if (this.uploadStatus) this.uploadStatus.textContent = '';
     } finally {
-      this.uploadButton.disabled = false;
+      if (this.uploadButton) this.uploadButton.disabled = false;
     }
   }
 
@@ -147,6 +170,8 @@ export class ImageUploader {
    * @param {string} imageUrl - URL of the image to display
    */
   displayImage(imageUrl) {
+    if (!this.originalPanel) return;
+    
     // Clear placeholder
     this.originalPanel.innerHTML = '';
     
@@ -163,13 +188,17 @@ export class ImageUploader {
 
   showError(message) {
     const errorBanner = document.getElementById('error-banner');
-    errorBanner.textContent = message;
-    errorBanner.style.display = 'block';
-    
-    // Hide error after 5 seconds
-    setTimeout(() => {
-      errorBanner.style.display = 'none';
-    }, 5000);
+    if (errorBanner) {
+      errorBanner.textContent = message;
+      errorBanner.style.display = 'block';
+      
+      // Hide error after 5 seconds
+      setTimeout(() => {
+        errorBanner.style.display = 'none';
+      }, 5000);
+    } else {
+      console.error('Error:', message);
+    }
   }
 
   getImageId() {
@@ -181,9 +210,8 @@ export class ImageUploader {
   }
 
   getOriginalFilename() {
-    const file = this.fileInput.files[0];
+    const file = this.fileInput ? this.fileInput.files[0] : null;
     if (!file) return 'output';
-    // Strip extension: "tile_01.png" -> "tile_01"
-    return file.name.replace(/\.[^/.]+$/, '');
+    return file.name; // keep full filename including extension
   }
 }

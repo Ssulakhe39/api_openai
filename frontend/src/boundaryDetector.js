@@ -5,19 +5,26 @@ export class BoundaryDetector {
   constructor(imageUploader, modelSelector) {
     this.imageUploader = imageUploader;
     this.modelSelector = modelSelector;
-    this.boundaryButton = document.getElementById('boundary-button');
-    this.boundaryStatus = document.getElementById('boundary-status');
     this.boundaries = null;
-    
-    this.setupEventListeners();
+  }
+  
+  // Getter methods for DOM elements
+  get boundaryButton() {
+    return document.getElementById('boundary-button');
+  }
+  
+  get boundaryStatus() {
+    return document.getElementById('boundary-status');
   }
 
   setupEventListeners() {
-    this.boundaryButton.addEventListener('click', () => this.handleBoundaryDetection());
+    if (this.boundaryButton) {
+      this.boundaryButton.addEventListener('click', () => this.handleBoundaryDetection());
+    }
     
     // Enable button when segmentation is complete
     window.addEventListener('segmentationComplete', () => {
-      this.boundaryButton.disabled = false;
+      if (this.boundaryButton) this.boundaryButton.disabled = false;
     });
   }
 
@@ -58,13 +65,17 @@ export class BoundaryDetector {
    */
   async detectBoundaries(imageId, modelName) {
     // Show loading
-    this.boundaryButton.disabled = true;
-    this.boundaryStatus.textContent = 'Detecting boundaries...';
-    this.boundaryStatus.style.display = 'block';
-    this.boundaryStatus.style.color = '#666';
+    if (this.boundaryButton) {
+      this.boundaryButton.disabled = true;
+    }
+    if (this.boundaryStatus) {
+      this.boundaryStatus.textContent = 'Detecting boundaries...';
+      this.boundaryStatus.style.display = 'block';
+      this.boundaryStatus.style.color = '#666';
+    }
     
     try {
-      const response = await fetch('http://localhost:8000/boundaries', {
+      const response = await fetch('/boundaries', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -94,7 +105,9 @@ export class BoundaryDetector {
       }
       throw error;
     } finally {
-      this.boundaryButton.disabled = false;
+      if (this.boundaryButton) {
+        this.boundaryButton.disabled = false;
+      }
     }
   }
 
@@ -106,9 +119,11 @@ export class BoundaryDetector {
     const { buildings, totalBuildings, processingTime } = result;
     
     // Update status
-    this.boundaryStatus.textContent = 
-      `Found ${totalBuildings} buildings in ${processingTime.toFixed(2)}s`;
-    this.boundaryStatus.style.color = '#28a745';
+    if (this.boundaryStatus) {
+      this.boundaryStatus.textContent = 
+        `Found ${totalBuildings} buildings in ${processingTime.toFixed(2)}s`;
+      this.boundaryStatus.style.color = '#28a745';
+    }
     
     // Draw boundaries on the overlay panel
     this.drawBoundariesOnCanvas(buildings);

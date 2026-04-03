@@ -12,21 +12,8 @@ import importlib.util
 
 from .segmentation_model import SegmentationModel
 
-# Check if SAM2 is available
+# All heavy adapter imports are deferred to load_model() to keep startup fast
 SAM2_AVAILABLE = importlib.util.find_spec("sam2") is not None
-
-if SAM2_AVAILABLE:
-    try:
-        from .sam2_adapter import SAM2Adapter
-    except ImportError:
-        SAM2_AVAILABLE = False
-        SAM2Adapter = None
-else:
-    SAM2Adapter = None
-
-from .yolov8_adapter import YOLOv8Adapter
-from .unet_adapter import UNetAdapter
-from .maskrcnn_adapter import MaskRCNNAdapter
 
 
 class SegmentationModelManager:
@@ -51,22 +38,22 @@ class SegmentationModelManager:
         # Add SAM2 only if available
         if SAM2_AVAILABLE:
             self.model_configs['sam2'] = {
-                'class': SAM2Adapter,
+                'class': None,
                 'checkpoint_path': 'checkpoints/sam2_hiera_large.pt',
                 'model_cfg': 'sam2_hiera_l.yaml'
             }
         
         # Add custom YOLOv8m segmentation model trained on building dataset
         self.model_configs['yolov8m-custom'] = {
-            'class': YOLOv8Adapter,
-            'model_path': r'D:\model weights\best_fixed.pt'  # Fixed/rebuilt model
+            'class': None,
+            'model_path': r'D:\model weights\best_fixed.pt'
         }
         
         # Add custom Mask R-CNN segmentation model trained on building dataset
         self.model_configs['maskrcnn-custom'] = {
-            'class': MaskRCNNAdapter,
-            'model_path': r'D:\model weights\maskrcnn_building_best.pth',  # Custom trained model
-            'num_classes': 2  # Background + building
+            'class': None,
+            'model_path': r'D:\model weights\maskrcnn_building_best.pth',
+            'num_classes': 2
         }
     
     def load_model(self, model_name: str) -> None:
@@ -98,6 +85,22 @@ class SegmentationModelManager:
         # Get model configuration
         config = self.model_configs[model_name]
         model_class = config['class']
+        
+        # Lazy import the adapter class now (deferred from module load)
+        if model_class is None:
+            if model_name == 'sam2':
+                if SAM2_AVAILABLE:
+                    try:
+                        from .sam2_adapter import SAM2Adapter
+                        model_class = SAM2Adapter
+                    except ImportError:
+                        raise ValueError("SAM2 is not available.")
+            elif model_name in ['yolov8m-custom']:
+                from .yolov8_adapter import YOLOv8Adapter
+                model_class = YOLOv8Adapter
+            elif model_name == 'maskrcnn-custom':
+                from .maskrcnn_adapter import MaskRCNNAdapter
+                model_class = MaskRCNNAdapter
         
         # Create model instance based on type
         if model_name == 'sam2':

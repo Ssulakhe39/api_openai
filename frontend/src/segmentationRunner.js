@@ -5,18 +5,27 @@ export class SegmentationRunner {
   constructor(imageUploader, modelSelector) {
     this.imageUploader = imageUploader;
     this.modelSelector = modelSelector;
-    this.segmentButton = document.getElementById('segment-button');
-    this.loadingIndicator = document.getElementById('loading-indicator');
     this.segmentationResult = null;
-
-    // Ensure loading indicator is hidden on init (clears stale state)
-    this.loadingIndicator.style.display = 'none';
-
-    this.setupEventListeners();
+  }
+  
+  // Getter methods for DOM elements
+  get segmentButton() {
+    return document.getElementById('segment-button');
+  }
+  
+  get loadingIndicator() {
+    return document.getElementById('loading-indicator');
   }
 
   setupEventListeners() {
-    this.segmentButton.addEventListener('click', () => this.handleSegmentation());
+    // Ensure loading indicator is hidden on init (clears stale state)
+    if (this.loadingIndicator) {
+      this.loadingIndicator.style.display = 'none';
+    }
+    
+    if (this.segmentButton) {
+      this.segmentButton.addEventListener('click', () => this.handleSegmentation());
+    }
     
     // Enable button when image is uploaded
     window.addEventListener('imageUploaded', () => {
@@ -30,7 +39,9 @@ export class SegmentationRunner {
   }
 
   updateButtonState() {
-    this.segmentButton.disabled = !this.canRunSegmentation();
+    if (this.segmentButton) {
+      this.segmentButton.disabled = !this.canRunSegmentation();
+    }
   }
 
   /**
@@ -80,12 +91,16 @@ export class SegmentationRunner {
    */
   async runSegmentation(imageId, modelName) {
     // Show loading indicator
-    this.segmentButton.disabled = true;
-    this.loadingIndicator.style.display = 'block';
+    if (this.segmentButton) {
+      this.segmentButton.disabled = true;
+    }
+    if (this.loadingIndicator) {
+      this.loadingIndicator.style.display = 'block';
+    }
 
     // Elapsed time counter so user sees progress
     let elapsed = 0;
-    const loadingSpan = this.loadingIndicator.querySelector('span');
+    const loadingSpan = this.loadingIndicator ? this.loadingIndicator.querySelector('span') : null;
     const timer = setInterval(() => {
       elapsed++;
       if (loadingSpan) loadingSpan.textContent = `Processing segmentation, please wait... (${elapsed}s)`;
@@ -96,7 +111,7 @@ export class SegmentationRunner {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 300000);
 
-      const response = await fetch('http://localhost:8000/segment', {
+      const response = await fetch('/segment', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -117,7 +132,7 @@ export class SegmentationRunner {
       const data = await response.json();
       
       return {
-        maskUrl: `http://localhost:8000${data.mask_url}`,
+        maskUrl: `${data.mask_url}`,
         maskBase64: data.mask_base64,
         processingTime: data.processing_time,
         modelUsed: data.model_used
@@ -132,8 +147,12 @@ export class SegmentationRunner {
       // Hide loading indicator and clear timer
       clearInterval(timer);
       if (loadingSpan) loadingSpan.textContent = 'Processing segmentation, please wait...';
-      this.loadingIndicator.style.display = 'none';
-      this.segmentButton.disabled = false;
+      if (this.loadingIndicator) {
+        this.loadingIndicator.style.display = 'none';
+      }
+      if (this.segmentButton) {
+        this.segmentButton.disabled = false;
+      }
     }
   }
 

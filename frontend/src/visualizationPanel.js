@@ -20,7 +20,7 @@ export class VisualizationPanel {
 
   async handleSegmentationComplete(result) {
     const imageData = this.imageUploader.getUploadedImageData();
-    const originalImageUrl = `http://localhost:8000${imageData.image_url}`;
+    const originalImageUrl = `${imageData.image_url}`;
     
     // Display mask
     this.displayMask(result.maskUrl);

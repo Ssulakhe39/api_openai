@@ -5,15 +5,20 @@ This module sets up the FastAPI application instance, configures CORS middleware
 for frontend communication, and sets up static file serving for images and masks.
 """
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
+from enum import Enum
 import os
 import uuid
 import time
 import logging
+import zipfile
+import io
+import asyncio
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 import base64
@@ -55,8 +60,12 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",  # React/Vite dev server
+        "http://localhost:3001",  # Vite fallback port
+        "http://localhost:4000",  # Vite port (deployment)
         "http://localhost:5173",  # Vite default port
         "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
+        "http://127.0.0.1:4000",
         "http://127.0.0.1:5173",
     ],
     allow_credentials=True,
@@ -67,9 +76,11 @@ app.add_middleware(
 # Create directories for storing uploaded images and generated masks
 UPLOAD_DIR = Path("backend/uploads/images")
 MASK_DIR = Path("backend/uploads/masks")
+BATCH_DIR = Path("backend/uploads/batch")
 
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 MASK_DIR.mkdir(parents=True, exist_ok=True)
+BATCH_DIR.mkdir(parents=True, exist_ok=True)
 
 # Mount static file directories for serving images and masks
 app.mount("/images", StaticFiles(directory=str(UPLOAD_DIR)), name="images")
@@ -157,6 +168,49 @@ async def health_check():
     return {"status": "healthy"}
 
 
+# ---------------------------------------------------------------------------
+# Auth
+# ---------------------------------------------------------------------------
+
+# Simple hardcoded credentials — replace with a DB-backed solution for production
+USERS = {
+    "admin": "admin123",
+    "user":  "user123",
+}
+
+import secrets
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+@app.post("/api/auth/login")
+async def login(request: LoginRequest):
+    pwd = USERS.get(request.username)
+    if not pwd or pwd != request.password:
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
+    token = secrets.token_hex(32)
+    return {"token": token, "username": request.username}
+
+
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+
+@app.post("/api/auth/register")
+async def register(request: RegisterRequest):
+    if not request.username or len(request.username) < 3:
+        raise HTTPException(status_code=400, detail="Username must be at least 3 characters.")
+    if not request.password or len(request.password) < 4:
+        raise HTTPException(status_code=400, detail="Password must be at least 4 characters.")
+    if request.username in USERS:
+        raise HTTPException(status_code=409, detail="Username already exists.")
+    USERS[request.username] = request.password
+    token = secrets.token_hex(32)
+    logger.info(f"New user registered: {request.username}")
+    return {"token": token, "username": request.username}
+
+
 # Response models
 class UploadResponse(BaseModel):
     """Response model for image upload."""
@@ -206,6 +260,64 @@ boundary_detector = BoundaryDetector(
     morph_iterations=2,       # 2 iterations for closing/opening
     shapely_tolerance=None    # Optional Shapely simplification (disabled)
 )
+
+# ---------------------------------------------------------------------------
+# Batch processing models and state
+# ---------------------------------------------------------------------------
+
+class ItemStatus(str, Enum):
+    pending = "pending"
+    processing = "processing"
+    done = "done"
+    failed = "failed"
+
+class JobStatus(str, Enum):
+    uploaded = "uploaded"
+    running = "running"
+    complete = "complete"
+    failed = "failed"
+
+class BatchItem(BaseModel):
+    item_id: str
+    original_filename: str
+    image_path: str = ""
+    mask_path: str = ""
+    status: ItemStatus = ItemStatus.pending
+    error: str = ""
+    polygons: list = []
+    building_count: int = 0
+
+class BatchJob(BaseModel):
+    batch_id: str
+    status: JobStatus = JobStatus.uploaded
+    model: str = ""
+    items: list[BatchItem] = []
+    created_at: str = ""
+
+class BatchUploadResponse(BaseModel):
+    batch_id: str
+    filenames: list[str]
+    total: int
+
+class BatchRunRequest(BaseModel):
+    model: str
+
+class BatchStatusResponse(BaseModel):
+    batch_id: str
+    status: str
+    total: int
+    done: int
+    failed: int
+    pending: int
+    processing: int
+    items: list[BatchItem]
+
+# In-memory batch store
+batch_jobs: dict[str, BatchJob] = {}
+
+MAX_BATCH_ZIP_SIZE = 500 * 1024 * 1024  # 500 MB
+MAX_BATCH_IMAGES = 50
+SUPPORTED_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tiff", ".tif"}
 
 # Maximum file size: 50MB
 MAX_FILE_SIZE = 50 * 1024 * 1024
@@ -436,11 +548,6 @@ async def get_models():
     """
     models = [
         ModelInfo(
-            name="sam2",
-            display_name="SAM2 (Segment Anything Model)",
-            description="Foundation model for general-purpose segmentation"
-        ),
-        ModelInfo(
             name="yolov8m-custom",
             display_name="YOLOv8m Custom (Your Dataset)",
             description="YOLOv8m trained on your building dataset - Fixed version"
@@ -501,6 +608,7 @@ async def detect_boundaries(request: BoundaryRequest):
         )
     
     try:
+        import cv2
         # Load mask
         logger.info(f"Loading mask: {mask_path}")
         mask = image_processor.load_image(str(mask_path))
@@ -598,6 +706,7 @@ async def gpt_boundaries(request: GPTBoundaryRequest):
         raise HTTPException(status_code=404, detail="Mask not found. Please run segmentation first.")
 
     try:
+        import cv2
         start_time = time.time()
 
         # Load original image in BGR for OpenCV
@@ -658,3 +767,305 @@ async def gpt_boundaries(request: GPTBoundaryRequest):
     except Exception as e:
         logger.error(f"GPT boundary detection failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"GPT boundary detection failed: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# Batch endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/batch/{batch_id}/items/{item_id}/image")
+async def get_batch_item_image(batch_id: str, item_id: str):
+    """Serve the original image for a batch item."""
+    from fastapi.responses import FileResponse
+    job = batch_jobs.get(batch_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Batch job not found.")
+    item = next((i for i in job.items if i.item_id == item_id), None)
+    if not item or not item.image_path:
+        raise HTTPException(status_code=404, detail="Item image not found.")
+    p = Path(item.image_path)
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="Image file not found.")
+    return FileResponse(str(p))
+
+
+@app.post("/api/batch/upload-zip", response_model=BatchUploadResponse)
+async def upload_zip(file: UploadFile = File(...)):
+    """Upload a ZIP of images for batch processing."""
+    # Validate extension
+    if not (file.filename or "").lower().endswith(".zip"):
+        raise HTTPException(status_code=400, detail="Only .zip files are accepted.")
+
+    contents = await file.read()
+    if len(contents) > MAX_BATCH_ZIP_SIZE:
+        raise HTTPException(status_code=413, detail="ZIP file exceeds 500 MB limit.")
+
+    # Validate it's a real zip
+    if not zipfile.is_zipfile(io.BytesIO(contents)):
+        raise HTTPException(status_code=400, detail="Uploaded file is not a valid ZIP archive.")
+
+    batch_id = str(uuid.uuid4())
+    batch_img_dir = BATCH_DIR / batch_id / "images"
+    batch_img_dir.mkdir(parents=True, exist_ok=True)
+
+    items: list[BatchItem] = []
+    with zipfile.ZipFile(io.BytesIO(contents)) as zf:
+        image_members = [
+            m for m in zf.namelist()
+            if Path(m).suffix.lower() in SUPPORTED_IMAGE_EXTS and not m.startswith("__MACOSX")
+        ]
+        if not image_members:
+            shutil.rmtree(BATCH_DIR / batch_id, ignore_errors=True)
+            raise HTTPException(status_code=400, detail="ZIP contains no supported image files (jpg, jpeg, png, tiff, tif).")
+        if len(image_members) > MAX_BATCH_IMAGES:
+            shutil.rmtree(BATCH_DIR / batch_id, ignore_errors=True)
+            raise HTTPException(status_code=400, detail=f"ZIP contains more than {MAX_BATCH_IMAGES} images.")
+
+        for member in image_members:
+            item_id = str(uuid.uuid4())
+            original_filename = Path(member).name
+            dest = batch_img_dir / f"{item_id}{Path(member).suffix.lower()}"
+            dest.write_bytes(zf.read(member))
+            items.append(BatchItem(
+                item_id=item_id,
+                original_filename=original_filename,
+                image_path=str(dest),
+            ))
+
+    job = BatchJob(
+        batch_id=batch_id,
+        status=JobStatus.uploaded,
+        items=items,
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+    batch_jobs[batch_id] = job
+    logger.info(f"Batch uploaded: batch_id={batch_id}, images={len(items)}")
+    return BatchUploadResponse(batch_id=batch_id, filenames=[i.original_filename for i in items], total=len(items))
+
+
+async def _run_batch_job(batch_id: str):
+    """Background task: sequentially segment + detect boundaries for each item using GPT-4o Vision."""
+    job = batch_jobs.get(batch_id)
+    if not job:
+        return
+
+    batch_mask_dir = BATCH_DIR / batch_id / "masks"
+    batch_mask_dir.mkdir(parents=True, exist_ok=True)
+
+    api_key = os.getenv("OPENAI_API_KEY", "")
+    extractor = GPTBoundaryExtractor(api_key=api_key)
+
+    for item in job.items:
+        item.status = ItemStatus.processing
+        try:
+            import cv2
+            img_path = Path(item.image_path)
+            image_array = image_processor.load_image(str(img_path))
+            original_bgr = cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR)
+
+            # Segmentation
+            mask = model_manager.segment(image_array, job.model)
+            mask_filename = f"{item.item_id}-mask.png"
+            mask_path = batch_mask_dir / mask_filename
+            image_processor.save_mask(mask, str(mask_path))
+            item.mask_path = str(mask_path)
+
+            # Get per-instance masks from the model
+            mask_gray = mask if len(mask.shape) == 2 else cv2.cvtColor(mask, cv2.COLOR_RGB2GRAY)
+            model_obj = model_manager.get_model(job.model)
+            if hasattr(model_obj, 'instance_segment'):
+                instance_masks = model_obj.instance_segment(image_array)
+            else:
+                # Fallback: treat combined mask as single instance
+                instance_masks = [mask_gray]
+
+            # GPT boundary detection
+            result = await extractor.process_async(original_bgr, instance_masks)
+            item.polygons = result["polygons"]
+            item.building_count = len(result["polygons"])
+            item.status = ItemStatus.done
+            logger.info(f"Batch item done: item_id={item.item_id}, buildings={len(result['polygons'])}, gpt_count={result.get('gpt_count', 0)}, fallback_count={result['fallback_count']}")
+        except Exception as e:
+            item.status = ItemStatus.failed
+            item.error = str(e)
+            logger.error(f"Batch item failed: item_id={item.item_id}, error={e}")
+
+        # Yield control between items
+        await asyncio.sleep(0)
+
+    all_failed = all(i.status == ItemStatus.failed for i in job.items)
+    job.status = JobStatus.failed if all_failed else JobStatus.complete
+    logger.info(f"Batch job complete: batch_id={batch_id}, status={job.status}")
+
+
+@app.post("/api/batch/{batch_id}/run")
+async def run_batch(batch_id: str, request: BatchRunRequest, background_tasks: BackgroundTasks):
+    """Start sequential batch processing."""
+    job = batch_jobs.get(batch_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Batch job not found.")
+    if job.status != JobStatus.uploaded:
+        raise HTTPException(status_code=400, detail=f"Job is already in state '{job.status}'.")
+
+    available_models = model_manager.get_available_models()
+    if request.model not in available_models:
+        raise HTTPException(status_code=400, detail=f"Invalid model. Supported: {', '.join(available_models)}")
+
+    job.model = request.model
+    job.status = JobStatus.running
+    background_tasks.add_task(_run_batch_job, batch_id)
+    return {"status": "started"}
+
+
+@app.get("/api/batch/{batch_id}/status", response_model=BatchStatusResponse)
+async def get_batch_status(batch_id: str):
+    """Poll batch job progress."""
+    job = batch_jobs.get(batch_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Batch job not found.")
+
+    counts = {s: 0 for s in ItemStatus}
+    for item in job.items:
+        counts[item.status] += 1
+
+    return BatchStatusResponse(
+        batch_id=batch_id,
+        status=job.status,
+        total=len(job.items),
+        done=counts[ItemStatus.done],
+        failed=counts[ItemStatus.failed],
+        pending=counts[ItemStatus.pending],
+        processing=counts[ItemStatus.processing],
+        items=job.items,
+    )
+
+
+@app.post("/api/batch/{batch_id}/items/{item_id}/polygons")
+async def update_item_polygons(batch_id: str, item_id: str, body: dict):
+    """Save edited polygons for a single batch item."""
+    job = batch_jobs.get(batch_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Batch job not found.")
+    item = next((i for i in job.items if i.item_id == item_id), None)
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found.")
+    item.polygons = body.get("polygons", item.polygons)
+    item.building_count = len(item.polygons)
+    return {"status": "ok"}
+
+
+@app.post("/api/batch/{batch_id}/items/{item_id}/retry")
+async def retry_batch_item(batch_id: str, item_id: str, background_tasks: BackgroundTasks):
+    """Retry a failed batch item using GPT-4o Vision boundary detection."""
+    job = batch_jobs.get(batch_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Batch job not found.")
+    item = next((i for i in job.items if i.item_id == item_id), None)
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found.")
+    if item.status != ItemStatus.failed:
+        raise HTTPException(status_code=400, detail="Only failed items can be retried.")
+
+    async def _retry():
+        import cv2
+        item.status = ItemStatus.processing
+        item.error = ""
+        try:
+            api_key = os.getenv("OPENAI_API_KEY", "")
+            extractor = GPTBoundaryExtractor(api_key=api_key)
+            
+            img_path = Path(item.image_path)
+            image_array = image_processor.load_image(str(img_path))
+            original_bgr = cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR)
+            
+            mask = model_manager.segment(image_array, job.model)
+            batch_mask_dir = BATCH_DIR / batch_id / "masks"
+            mask_path = batch_mask_dir / f"{item.item_id}-mask.png"
+            image_processor.save_mask(mask, str(mask_path))
+            item.mask_path = str(mask_path)
+            
+            mask_gray = mask if len(mask.shape) == 2 else cv2.cvtColor(mask, cv2.COLOR_RGB2GRAY)
+            model_obj = model_manager.get_model(job.model)
+            if hasattr(model_obj, 'instance_segment'):
+                instance_masks = model_obj.instance_segment(image_array)
+            else:
+                instance_masks = [mask_gray]
+            
+            result = await extractor.process_async(original_bgr, instance_masks)
+            item.polygons = result["polygons"]
+            item.building_count = len(result["polygons"])
+            item.status = ItemStatus.done
+        except Exception as e:
+            item.status = ItemStatus.failed
+            item.error = str(e)
+
+    background_tasks.add_task(_retry)
+    return {"status": "retrying"}
+
+
+@app.get("/api/batch/{batch_id}/download")
+async def download_batch(batch_id: str, format: str = "json"):
+    """Download all processed results as a ZIP."""
+    job = batch_jobs.get(batch_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Batch job not found.")
+
+    done_items = [i for i in job.items if i.status == ItemStatus.done]
+    if not done_items:
+        raise HTTPException(status_code=400, detail="No successfully processed items to download.")
+
+    if format not in ("json", "png", "jpeg"):
+        raise HTTPException(status_code=400, detail="Format must be json, png, or jpeg.")
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for item in done_items:
+            import cv2
+            stem = Path(item.original_filename).stem
+
+            if format == "json":
+                # Normalise polygons to consistent dict format
+                normalised = []
+                for p in item.polygons:
+                    if isinstance(p, list):
+                        normalised.append({"points": p})
+                    else:
+                        normalised.append(p)
+                data = {
+                    "filename": item.original_filename,
+                    "building_count": item.building_count,
+                    "polygons": normalised,
+                }
+                import json
+                zf.writestr(f"{stem}_output.json", json.dumps(data, indent=2))
+
+            else:  # png or jpeg
+                import cv2
+                img_path = Path(item.image_path)
+                image_array = image_processor.load_image(str(img_path))
+                render = cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR)
+
+                # Draw polygons
+                for building in item.polygons:
+                    # Support both raw [[x,y],...] and dict formats
+                    if isinstance(building, list):
+                        pts = building
+                    elif isinstance(building, dict):
+                        pts = building.get("points") or building.get("coordinates") or []
+                    else:
+                        pts = []
+                    if pts:
+                        pts_arr = np.array(pts, dtype=np.int32).reshape((-1, 1, 2))
+                        cv2.polylines(render, [pts_arr], isClosed=True, color=(0, 255, 0), thickness=2)
+
+                ext = ".jpg" if format == "jpeg" else ".png"
+                encode_ext = ".jpg" if format == "jpeg" else ".png"
+                _, encoded = cv2.imencode(encode_ext, render)
+                zf.writestr(f"{stem}_output{ext}", encoded.tobytes())
+
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename=batch_{batch_id}_results.zip"},
+    )

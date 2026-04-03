@@ -22,22 +22,59 @@ export class GPTBoundaryDetector {
     this._imgH         = 0;
     this._selectedPoly = null;
 
-    this._gptPanel     = document.getElementById('gpt-panel');
-    this._gptPanelWrap = document.getElementById('gpt-panel-wrapper');
-    this._gptStatus    = document.getElementById('gpt-status');
-    this._gptInfoBar   = document.getElementById('gpt-info-bar');
-    this._editBar      = document.getElementById('gpt-edit-bar');
-    this._editBtn      = document.getElementById('gpt-edit-button');
-    this._doneBtn      = document.getElementById('gpt-done-button');
-    this._gptBtn       = document.getElementById('gpt-boundary-button');
-
+    // Don't store references in constructor - get them when needed
     this._setupButtonListeners();
   }
 
   _setupButtonListeners() {
-    if (this._gptBtn)  this._gptBtn.addEventListener('click',  () => this._runDetection());
-    if (this._editBtn) this._editBtn.addEventListener('click', () => this._enterEditMode());
-    if (this._doneBtn) this._doneBtn.addEventListener('click', () => this._exitEditMode());
+    // Use event delegation on document to avoid issues with element references
+    document.addEventListener('click', (e) => {
+      if (e.target.id === 'gpt-boundary-button' || e.target.closest('#gpt-boundary-button')) {
+        console.log('GPT Boundary button clicked');
+        this._runDetection();
+      }
+      if (e.target.id === 'gpt-edit-button' || e.target.closest('#gpt-edit-button')) {
+        console.log('GPT Edit button clicked');
+        this._enterEditMode();
+      }
+      if (e.target.id === 'gpt-done-button' || e.target.closest('#gpt-done-button')) {
+        console.log('GPT Done button clicked');
+        this._exitEditMode();
+      }
+    });
+  }
+  
+  // Helper methods to get elements when needed
+  _getGptPanel() {
+    return document.getElementById('gpt-panel');
+  }
+  
+  _getGptPanelWrap() {
+    return document.getElementById('gpt-panel-wrapper');
+  }
+  
+  _getGptStatus() {
+    return document.getElementById('gpt-status');
+  }
+  
+  _getGptInfoBar() {
+    return document.getElementById('gpt-info-bar');
+  }
+  
+  _getEditBar() {
+    return document.getElementById('gpt-edit-bar');
+  }
+  
+  _getEditBtn() {
+    return document.getElementById('gpt-edit-button');
+  }
+  
+  _getDoneBtn() {
+    return document.getElementById('gpt-done-button');
+  }
+  
+  _getGptBtn() {
+    return document.getElementById('gpt-boundary-button');
   }
 
   // ── Filename helper ────────────────────────────────────────────────────────
@@ -46,7 +83,8 @@ export class GPTBoundaryDetector {
     const name = (this.imageUploader && this.imageUploader.getOriginalFilename)
       ? this.imageUploader.getOriginalFilename()
       : 'output';
-    return name + '_output';
+    // Strip extension so download methods can append the correct one
+    return name.replace(/\.[^/.]+$/, '');
   }
 
   // ── Detection ──────────────────────────────────────────────────────────────
@@ -54,14 +92,34 @@ export class GPTBoundaryDetector {
   async _runDetection() {
     const imageId = this.imageUploader ? this.imageUploader.getImageId() : null;
     const model   = this.modelSelector  ? this.modelSelector.getSelectedModel() : null;
-    if (!imageId || !model) {
-      this._setStatus('Please upload an image and select a model first.', 'error');
+    if (!imageId) {
+      this._setStatus('Please upload an image first.', 'error');
       return;
     }
-    this._setStatus('Detecting boundaries...', 'info');
-    if (this._gptBtn) this._gptBtn.disabled = true;
+    if (!model) {
+      this._setStatus('Please select a model first.', 'error');
+      return;
+    }
+
+    const gptBtn = this._getGptBtn();
+    if (gptBtn) gptBtn.disabled = true;
+    this._showLoading(true, 'Running segmentation...');
+
     try {
-      const resp = await fetch('http://localhost:8000/api/gpt-boundaries', {
+      // Step 1: Run segmentation silently in the background
+      const segResp = await fetch('/segment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image_id: imageId, model })
+      });
+      if (!segResp.ok) {
+        const err = await segResp.json().catch(() => ({ detail: segResp.statusText }));
+        throw new Error(err.detail || 'Segmentation failed');
+      }
+
+      // Step 2: Detect boundaries using the mask
+      this._showLoading(true, 'Detecting boundaries...');
+      const resp = await fetch('/api/gpt-boundaries', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ image_id: imageId, model })
@@ -73,51 +131,74 @@ export class GPTBoundaryDetector {
       const data = await resp.json();
       this._overlayB64 = data.gpt_overlay_b64;
       this._polygons   = data.polygons || [];
-      this._imageUrl   = data.image_url ? 'http://localhost:8000' + data.image_url : null;
-      this._setStatus('Found ' + data.building_count + ' building(s) in ' + data.processing_time_s + 's', 'success');
+      this._imageUrl   = data.image_url ? data.image_url : null;
+      this._setStatus('Found ' + this._polygons.length + ' building(s) in ' + data.processing_time_s + 's', 'success');
       this._showStaticOverlay();
+      window.dispatchEvent(new CustomEvent('gptDetectionComplete', {
+        detail: { imageName: this.imageUploader ? this.imageUploader.getOriginalFilename() : this._baseName(), count: this._polygons.length }
+      }));
     } catch (e) {
       this._setStatus('Error: ' + e.message, 'error');
     } finally {
-      if (this._gptBtn) this._gptBtn.disabled = false;
+      this._showLoading(false);
+      if (gptBtn) gptBtn.disabled = false;
+    }
+  }
+
+  _showLoading(visible, message) {
+    const el = document.getElementById('loading-indicator');
+    if (!el) return;
+    if (visible) {
+      const span = el.querySelector('span');
+      if (span) span.textContent = message || 'Processing...';
+      el.style.display = 'flex';
+    } else {
+      el.style.display = 'none';
     }
   }
 
   // ── Static overlay ─────────────────────────────────────────────────────────
 
   _showStaticOverlay() {
-    if (!this._gptPanel || !this._overlayB64) return;
+    const gptPanel = this._getGptPanel();
+    if (!gptPanel || !this._overlayB64) return;
     this._editMode   = false;
     this._drawMode   = false;
     this._drawPoints = [];
 
-    if (this._gptPanelWrap) this._gptPanelWrap.style.display = '';
-    this._gptPanel.innerHTML = '';
+    const gptPanelWrap = this._getGptPanelWrap();
+    if (gptPanelWrap) gptPanelWrap.style.display = 'block';
+    gptPanel.innerHTML = '';
 
     const img = document.createElement('img');
     img.src = 'data:image/png;base64,' + this._overlayB64;
     img.alt = 'GPT boundary overlay';
-    img.style.cssText = 'max-width:100%;max-height:500px;object-fit:contain;display:block;';
-    this._gptPanel.appendChild(img);
+    img.style.cssText = 'width:100%;max-height:85vh;object-fit:contain;display:block;';
+    gptPanel.appendChild(img);
 
     // Save bar
     const saveBar = document.createElement('div');
     saveBar.style.cssText = 'display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap;';
     const saveLabel = document.createElement('span');
     saveLabel.textContent = 'Save as:';
-    saveLabel.style.cssText = 'font-size:13px;color:#444;font-weight:600;';
+    saveLabel.style.cssText = 'font-size:13px;color:var(--text-secondary);font-weight:600;';
     saveBar.appendChild(saveLabel);
-    saveBar.appendChild(this._makeBtn('JSON', '#27ae60', () => this._saveJSON()));
-    saveBar.appendChild(this._makeBtn('PNG',  '#2196F3', () => this._saveImage('png')));
-    saveBar.appendChild(this._makeBtn('JPEG', '#9b59b6', () => this._saveImage('jpeg')));
-    this._gptPanel.appendChild(saveBar);
+    saveBar.appendChild(this._makeBtn('JSON', 'var(--status-success)', () => this._saveJSON()));
+    saveBar.appendChild(this._makeBtn('PNG',  'var(--status-info)', () => this._saveImage('png')));
+    saveBar.appendChild(this._makeBtn('JPEG', 'var(--primary-cyan)', () => this._saveImage('jpeg')));
+    gptPanel.appendChild(saveBar);
 
-    if (this._editBar)  this._editBar.style.display  = '';
-    if (this._editBtn)  this._editBtn.style.display  = '';
-    if (this._doneBtn)  this._doneBtn.style.display  = 'none';
-    if (this._gptInfoBar) {
-      this._gptInfoBar.textContent = this._polygons.length + ' building(s) detected';
-      this._gptInfoBar.style.display = '';
+    const editBar = this._getEditBar();
+    const editBtn = this._getEditBtn();
+    const doneBtn = this._getDoneBtn();
+    const gptInfoBar = this._getGptInfoBar();
+    
+    if (editBar)  editBar.style.display  = 'flex';
+    if (editBtn)  editBtn.style.display  = '';
+    if (doneBtn)  doneBtn.style.display  = 'none';
+    if (gptInfoBar) {
+      gptInfoBar.textContent = this._polygons.length + ' building(s) detected';
+      gptInfoBar.style.display = 'block';
     }
   }
 
@@ -188,12 +269,14 @@ export class GPTBoundaryDetector {
     const a   = document.createElement('a');
     a.href = url; a.download = filename; a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+    window.dispatchEvent(new CustomEvent('fileSaved', { detail: { filename } }));
   }
 
   // ── Enter edit mode ────────────────────────────────────────────────────────
 
   _enterEditMode() {
-    if (!this._gptPanel || !this._overlayB64) return;
+    const gptPanel = this._getGptPanel();
+    if (!gptPanel || !this._overlayB64) return;
     this._editMode = true;
     const refImg = new Image();
     refImg.onload = () => this._buildSVGEditor(refImg.naturalWidth, refImg.naturalHeight);
@@ -203,9 +286,10 @@ export class GPTBoundaryDetector {
   // ── Build SVG editor ───────────────────────────────────────────────────────
 
   _buildSVGEditor(imgW, imgH) {
-    if (!this._gptPanel) return;
+    const gptPanel = this._getGptPanel();
+    if (!gptPanel) return;
     this._imgW = imgW; this._imgH = imgH;
-    this._gptPanel.innerHTML = '';
+    gptPanel.innerHTML = '';
 
     const toolbar = document.createElement('div');
     toolbar.style.cssText = 'display:flex;gap:8px;margin-bottom:6px;align-items:center;flex-wrap:wrap;';
@@ -230,12 +314,12 @@ export class GPTBoundaryDetector {
     toolbar.appendChild(hint);
 
     const container = document.createElement('div');
-    container.style.cssText = 'position:relative;display:inline-block;max-width:100%;';
+    container.style.cssText = 'position:relative;display:block;width:100%;';
 
     const bgImg = document.createElement('img');
     bgImg.src = this._imageUrl || ('data:image/png;base64,' + this._overlayB64);
     bgImg.alt = 'Original image';
-    bgImg.style.cssText = 'display:block;max-width:100%;max-height:500px;object-fit:contain;';
+    bgImg.style.cssText = 'display:block;width:100%;max-height:85vh;object-fit:contain;';
 
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;overflow:visible;';
@@ -249,11 +333,16 @@ export class GPTBoundaryDetector {
 
     container.appendChild(bgImg);
     container.appendChild(svg);
-    this._gptPanel.appendChild(toolbar);
-    this._gptPanel.appendChild(container);
+    
+    if (gptPanel) {
+      gptPanel.appendChild(toolbar);
+      gptPanel.appendChild(container);
+    }
 
-    if (this._editBtn) this._editBtn.style.display = 'none';
-    if (this._doneBtn) this._doneBtn.style.display = '';
+    const editBtn = this._getEditBtn();
+    const doneBtn = this._getDoneBtn();
+    if (editBtn) editBtn.style.display = 'none';
+    if (doneBtn) doneBtn.style.display = '';
   }
 
   // ── Render one polygon ─────────────────────────────────────────────────────
@@ -313,7 +402,7 @@ export class GPTBoundaryDetector {
     this._polygons.splice(polyIdx, 1);
     this._selectedPoly = null;
     this._buildSVGEditor(this._imgW, this._imgH);
-    if (this._gptInfoBar) this._gptInfoBar.textContent = this._polygons.length + ' building(s)';
+    this._updateBuildingCount();
   }
 
   // ── Draw mode ──────────────────────────────────────────────────────────────
@@ -369,7 +458,7 @@ export class GPTBoundaryDetector {
       this._polygons.push([...this._drawPoints]);
       this._resetDrawUI();
       this._buildSVGEditor(this._imgW, this._imgH);
-      if (this._gptInfoBar) this._gptInfoBar.textContent = this._polygons.length + ' building(s)';
+      this._updateBuildingCount();
     } else {
       this._setStatus('Need at least 3 points to close a polygon.', 'error');
       this._resetDrawUI();
@@ -422,15 +511,60 @@ export class GPTBoundaryDetector {
     }
   }
 
-  // ── Exit edit mode ─────────────────────────────────────────────────────────
+  // ── Exit edit mode — redraw overlay from current polygons ─────────────────
 
-  _exitEditMode() { this._showStaticOverlay(); }
+  _exitEditMode() {
+    // Redraw the overlay image using the current (edited) polygons
+    const src = this._imageUrl || ('data:image/png;base64,' + this._overlayB64);
+    const bgImg = new Image();
+    bgImg.crossOrigin = 'anonymous';
+    bgImg.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width  = bgImg.naturalWidth;
+      canvas.height = bgImg.naturalHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(bgImg, 0, 0);
+      this._polygons.forEach(poly => {
+        if (!poly || poly.length < 3) return;
+        ctx.beginPath();
+        ctx.moveTo(poly[0][0], poly[0][1]);
+        for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i][0], poly[i][1]);
+        ctx.closePath();
+        ctx.strokeStyle = 'red';
+        ctx.lineWidth   = 1.5;
+        ctx.stroke();
+        ctx.fillStyle = 'rgba(255,0,0,0.12)';
+        ctx.fill();
+      });
+      // Update the stored overlay so saves also use the edited version
+      this._overlayB64 = canvas.toDataURL('image/png').split(',')[1];
+      this._updateBuildingCount();
+      this._showStaticOverlay();
+    };
+    bgImg.onerror = () => this._showStaticOverlay();
+    bgImg.src = src;
+  }
 
   // ── Status ─────────────────────────────────────────────────────────────────
 
+  _updateBuildingCount() {
+    const count = this._polygons.length;
+    // Update info bar
+    const gptInfoBar = this._getGptInfoBar();
+    if (gptInfoBar) gptInfoBar.textContent = count + ' building(s)';
+    // Update detection results panel
+    const buildingCountEl = document.getElementById('buildingCount');
+    if (buildingCountEl) buildingCountEl.textContent = count;
+  }
+
   _setStatus(msg, type) {
-    if (!this._gptStatus) return;
-    this._gptStatus.textContent = msg;
-    this._gptStatus.style.color = type === 'error' ? '#e74c3c' : type === 'success' ? '#27ae60' : '#3498db';
+    const gptStatus = this._getGptStatus();
+    if (!gptStatus) {
+      console.log('GPT Status:', msg, type);
+      return;
+    }
+    gptStatus.textContent = msg;
+    gptStatus.style.display = msg ? 'block' : 'none';
+    gptStatus.style.color = type === 'error' ? 'var(--status-error)' : type === 'success' ? 'var(--status-success)' : 'var(--status-info)';
   }
 }

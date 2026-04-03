@@ -3,22 +3,33 @@
  */
 export class ModelSelector {
   constructor() {
-    this.modelSelect = document.getElementById('model-select');
     this.models = [];
     this.selectedModel = null;
-    
-    this.init();
+    this.useCards = false; // Flag to determine if using cards or dropdown
+  }
+  
+  // Getter for modelSelect element
+  get modelSelect() {
+    return document.getElementById('model-select');
   }
 
   async init() {
+    // Check if model-select is a container (for cards) or select element
+    if (this.modelSelect && this.modelSelect.tagName !== 'SELECT') {
+      this.useCards = true;
+    }
+    
     await this.loadAvailableModels();
     this.setupEventListeners();
   }
 
   setupEventListeners() {
-    this.modelSelect.addEventListener('change', (e) => {
-      this.setSelectedModel(e.target.value);
-    });
+    if (!this.useCards && this.modelSelect) {
+      this.modelSelect.addEventListener('change', (e) => {
+        this.setSelectedModel(e.target.value);
+      });
+    }
+    // Card-based selection is handled in the main app
   }
 
   /**
@@ -27,7 +38,7 @@ export class ModelSelector {
    */
   async getAvailableModels() {
     try {
-      const response = await fetch('http://localhost:8000/models');
+      const response = await fetch('/models');
       
       if (!response.ok) {
         throw new Error('Failed to fetch models');
@@ -46,13 +57,17 @@ export class ModelSelector {
     this.models = await this.getAvailableModels();
     
     if (this.models.length > 0) {
-      this.populateDropdown();
+      if (!this.useCards) {
+        this.populateDropdown();
+      }
       // Set default to first model
       this.setSelectedModel(this.models[0].name);
     }
   }
 
   populateDropdown() {
+    if (!this.modelSelect || this.useCards) return;
+    
     // Clear existing options
     this.modelSelect.innerHTML = '';
     
@@ -80,7 +95,9 @@ export class ModelSelector {
    */
   setSelectedModel(modelName) {
     this.selectedModel = modelName;
-    this.modelSelect.value = modelName;
+    if (this.modelSelect && !this.useCards) {
+      this.modelSelect.value = modelName;
+    }
     
     // Trigger custom event for other components
     window.dispatchEvent(new CustomEvent('modelSelected', { 
@@ -90,11 +107,13 @@ export class ModelSelector {
 
   showError(message) {
     const errorBanner = document.getElementById('error-banner');
-    errorBanner.textContent = message;
-    errorBanner.style.display = 'block';
-    
-    setTimeout(() => {
-      errorBanner.style.display = 'none';
-    }, 5000);
+    if (errorBanner) {
+      errorBanner.textContent = message;
+      errorBanner.style.display = 'block';
+      
+      setTimeout(() => {
+        errorBanner.style.display = 'none';
+      }, 5000);
+    }
   }
 }

@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Navigation Test</title>
+    <style>
+        .page-section { display: none; }
+        .page-section.active { display: block; }
+        .sidebar-nav-item.active { font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>Navigation Test</h1>
+    
+    <nav>
+        <a href="#" class="sidebar-nav-item active" data-page="dashboard">Dashboard</a>
+        <a href="#" class="sidebar-nav-item" data-page="single">Single Processing</a>
+    </nav>
+    
+    <div id="page-dashboard" class="page-section active">
+        <h2>Dashboard Page</h2>
+    </div>
+    
+    <div id="page-single" class="page-section">
+        <h2>Single Processing Page</h2>
+        <p>This is the single processing page content.</p>
+    </div>
+    
+    <script>
+        console.log('Test script loaded');
+        
+        document.querySelectorAll('.sidebar-nav-item').forEach(item => {
+            item.addEventListener('click', (e) => {
+                e.preventDefault();
+                const page = item.dataset.page;
+                console.log('Clicked:', page);
+                
+                // Update nav
+                document.querySelectorAll('.sidebar-nav-item').forEach(i => i.classList.remove('active'));
+                item.classList.add('active');
+                
+                // Update pages
+                document.querySelectorAll('.page-section').forEach(section => {
+                    section.classList.remove('active');
+                });
+                
+                const pageSection = document.getElementById(`page-${page}`);
+                console.log('Page section:', pageSection);
+                if (pageSection) {
+                    pageSection.classList.add('active');
+                    console.log('Page activated');
+                } else {
+                    console.error('Page not found');
+                }
+            });
+        });
+    </script>
+</body>
+</html>
