@@ -6,6 +6,7 @@ and router registration. All endpoint logic lives in api/routers/.
 """
 
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -42,10 +43,14 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# CORS
+# CORS — allow all origins in development; traffic from the network goes
+# through the Vite proxy which forwards to localhost:8000.
+_cors_env = os.getenv("CORS_ORIGINS", "")
+_cors_origins = [o.strip() for o in _cors_env.split(",") if o.strip()] if _cors_env else ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:4000", "http://localhost:8000", "http://127.0.0.1:4000", "http://127.0.0.1:8000"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
