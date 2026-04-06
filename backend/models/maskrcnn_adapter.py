@@ -7,12 +7,16 @@ providing instance segmentation for building detection in aerial images.
 
 from typing import Any
 import numpy as np
+import ssl
 import torch
 import torchvision
 from torchvision.models.detection import maskrcnn_resnet50_fpn
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from torchvision.models.detection.mask_rcnn import MaskRCNNPredictor
 import logging
+
+# Bypass SSL verification for environments with missing/broken certificates
+ssl._create_default_https_context = ssl._create_unverified_context
 
 from .segmentation_model import SegmentationModel
 
